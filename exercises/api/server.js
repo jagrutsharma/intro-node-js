@@ -2,6 +2,7 @@ const http = require('http')
 const url = require('url')
 const fs = require('fs')
 const path = require('path')
+const mime = require('mime')
 
 /**
  * this function is blocking, fix that
@@ -9,7 +10,13 @@ const path = require('path')
  */
 const findAsset = (name) => {
   const assetPath = path.join(__dirname, 'assets', name)
-  return fs.readFileSync(assetPath, {encoding: 'utf-8'}).toString()
+  // promisifying synchronous fs.readFile method
+  return new Promise((resolve, reject) => {
+	  fs.readFile(assetPath, {encoding: 'utf-8'}, (error, data) => {
+		if (error) reject(error)
+		else resolve(data)
+	  })
+  })
 }
 
 const hostname = '127.0.0.1'
@@ -18,21 +25,35 @@ const port = 3000
 // log incoming request coming into the server. Helpful for debugging and tracking
 const logRequest = (method, route, status) => console.log(method, route, status)
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const method = req.method
   const route = url.parse(req.url).pathname
-  // this is sloppy, especially with more assets, create a "router"
-  if (route === '/') {
-    res.writeHead(200, {'Content-Type': 'text/html'})
-    res.write(findAsset('index.html'))
-    logRequest(method, route, 200)
-    res.end()
-  } else {
-    // missing asset should not cause server crash
-    throw new Error('route not found')
-    res.end()
+
+  // efficient routing
+  const router = {
+  	'/ GET': {
+		asset: 'index.html',
+		mime: mime.getType('html')
+	},
+	'/style.css GET': {
+		asset: 'style.css',
+		mime: mime.getType('css')
+	}
   }
-  // most important part, send down the asset
+
+  const routeKey = route + ' ' + method
+  const match = router[routeKey]
+  if (!match) {
+	  res.writeHead(404, {'Content-Type': mime.getType('html')})
+	  res.write(await findAsset('error.html'))
+	  logRequest(method, route, 404)
+	  res.end()
+  } else {
+	  res.writeHead(200, {'Content-Type': match.mime})
+	  res.write(await findAsset(match.asset))
+	  logRequest(method, route, 200)
+	  res.end()
+  }
 })
 
 server.listen(port, hostname, () => {
